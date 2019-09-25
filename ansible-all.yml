@@ -1,0 +1,71 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: False
+
+    #vars_prompt:
+    #- name: "delete_prompt"
+    # prompt: "Delete Created EC2 Instances?"
+    # default: "false"
+  # private: no
+
+  tasks:
+    - name: Include vars
+      include_vars: variables.yaml
+
+    - name: Debug Vars
+      debug:
+        var: vars
+
+    - include: install-rds.yml
+
+    - import_tasks: tasks-redis.yml
+
+    - import_tasks: prepeare-ec2.yml
+
+    - name: Debug instance
+      debug:
+        var: ec2
+      when: debug == true
+
+    #DOING EFS file system
+
+    - import_tasks: install-efs.yml
+
+    - name: Debug EFS
+      debug:
+         var: efs
+      when: debug == true
+
+    #Insatalling web server
+- import_playbook: mount-ntfs.yml
+
+- import_playbook: install-web.yml
+
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  tasks:
+    - name: Include vars
+      include_vars: variables.yaml
+
+    - import_tasks: tasks/image-create.yml
+
+    - import_tasks: tasks/auto-scalling.yml
+
+      #when: debug is true
+
+    #This is because launch configs are immutable. This is how Amazon has designed it. You must create a new launch config and assign it to the #autoscale group.
+
+
+
+
+
+
+   
+
+
+
+
+
+   

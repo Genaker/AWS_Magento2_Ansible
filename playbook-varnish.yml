@@ -1,0 +1,88 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+
+    - include_vars: variables.yaml
+
+    - name:  "Set Infrastructure Name and Version"
+      set_fact:
+        infrastructure_name: Varnish
+        infrastructure_version: 1
+
+    - set_fact:
+        ec2_name: "{{ec2_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        # launch_configuration
+        ec2_lc_name: "{{ec2_lc_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_elb_name: "{{ec2_elb_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_elb_target_group_name: "{{ec2_elb_target_group_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_asg_name: "{{ec2_asg_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_desired_capacity: 1
+        asg_min_size: 1
+        asg_max_size: 1
+        ##ec2_tags_delete: test
+
+    - name: Debug Var
+      debug:
+        var: vars
+
+    - name: Prevent Key Asking
+      shell: export ANSIBLE_HOST_KEY_CHECKING=False
+
+    - name: Install nginx site for specified site
+      template:
+        src: templates/amazon.j2
+        dest: ~/.aws/credentials
+
+    - import_tasks: tasks/ec2-inst-create.yml
+
+    - name: Debug Var
+      debug:
+        var: ec2
+
+    - name: SET Varnish EC2 instanc
+      set_fact:
+        aws_varnish: "{{ec2}}"
+
+- import_playbook: tasks/install-varnish.yml
+
+- hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+
+    - name: Debug Var
+      debug:
+         var: vars
+
+    #- import_tasks: tasks/image-create.yml
+
+    #- import_tasks: tasks/auto-scalling.yml
+
+    - name: Get ELB Web Nodes
+      ec2_elb_facts:
+        region: "{{ region }}"
+        names: LoadBallanser1 #"{{ec2_elb_name}}-Web-Vers{{infrastructure_version}}"
+      register: elb_web_nodes
+
+    - name: Debug ELB WEB
+      debug:
+        var:  elb_web_nodes
+
+    - name:
+      set_fact:
+        elb_web_node_ip: ???ALB IP???
+
+    - name: Debug Var
+      debug:
+        var: aws_varnish
+
+    - name: Install system nginx config
+      become: yes
+      template:
+          src: templates/nginx/etc/sites-available/elb.conf.j2
+          dest: /etc/nginx/sites-enabled/elb.conf
+      delegate_to: "{{aws_varnish[0].public_ip}}"

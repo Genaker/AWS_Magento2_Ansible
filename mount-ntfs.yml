@@ -1,0 +1,168 @@
+---
+- hosts: aws
+  gather_facts: False
+  pre_tasks:
+
+    - name: Install python for Ansible
+      become: yes
+      raw: test -e /usr/bin/python || (sudo apt -y update && apt install -y python-minimal)
+      register: output
+      changed_when: output.stdout != ""
+    - setup: # aka gather_facts
+
+    - name: Install Software apt
+      become: yes
+      apt:
+        pkg:
+          - nfs-common
+          - autofs
+          - rpcbind
+          - binutils
+          - fpart # or parallel but it is more difficult
+          - cachefilesd # cache NFS file system
+
+    - name: Git Clone EFS UTILITES
+      become: yes
+      git:
+        repo: 'https://github.com/aws/efs-utils'
+        dest: ~/amazonEFS
+        update: no
+
+    ## We don't use it we use NFS
+    - name: build and install amazon-efs-utils as a DEB package
+      become: yes
+      shell: cd ~/amazonEFS && ./build-deb.sh && apt-get -y install ./build/amazon-efs-utils*deb
+      when: false
+
+
+  tasks:
+    - include_vars: variables.yaml
+    - ping:
+
+    - name: EFS LIST
+      debug:
+        var: item
+      with_items: "{{hostvars['localhost'].efs}}"
+      #when: debug is true
+
+    - name: Create Magento Folder
+      become: yes
+      file:
+        path: "/var/www/html/magento"
+        state: directory
+        mode: 0777
+
+
+    - name: Create EFS mount point
+      become: yes
+      file:
+        path: "/var/www/html/magento/{{item.mount}}"
+        state: directory
+        mode: 0777
+        #owner: '{{box_user}}'
+        #group: '{{box_group}}'
+
+      with_items:  "{{hostvars['localhost'].efs}}"
+
+        # - mkdir -p ${efs_directory}
+        # - echo "${file_system_id_01}:/ ${efs_directory} efs tls,_netdev" >> /etc/fstab
+        # - mount -a -t efs defaults
+
+    - name: start cachefilesd
+      become: yes
+      service:
+        name: cachefilesd
+        state: started
+
+
+    - name: Mount EFS NTFS tool  Amazon Mount Tool
+      become: yes
+      # sudo mount -t nfs4 -o vers=4.1 fs-43d9b1eb.efs.us-west-2.amazonaws.com:/ /var/www/html/magento/var
+      shell: mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,fsc {{item.obj.efs.filesystem_address}}   /var/www/html/magento/{{ item.mount }}
+      with_items: "{{hostvars['localhost'].efs}}"
+      register: mount
+      #Sometimes a command that returns different than 0 isn’t an error.
+      failed_when:
+        - '"already mounted" not in mount.stderr'
+        - mount.rc != 0
+
+    #_netdev = Mount after network is 'up'
+    # file shouldn't have extra rows
+    - lineinfile:
+      become: true
+      path: /etc/fstab
+      line: "{{item.obj.efs.filesystem_address}} /var/www/html/magento/{{ item.mount }} nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,fsc,_netdev"
+      create: yes
+      with_items: "{{hostvars['localhost'].efs}}"
+
+    - name: FSTAB create
+      become: yes
+      shell: >
+        mount -a
+      register: fstab_test
+
+    - name: Creates an entry  "@reboot sleep n && mount -a"
+      cron:
+        name: "a job for reboot"
+        special_time: reboot
+        job: "sleep {{ item }}; sudo mount -a"
+        with_items:
+          - 20
+          - 40
+          - 60
+          - 120
+          - 300
+
+    # /etc/network/if-up.d
+    - template:
+      become: yes
+        src: mount.sh.j2
+        dest: etc/network/if-up.d/mount
+
+
+    - name: Changing perm of "/foo/bar.sh", adding "+x"
+      become: yes
+      file: dest=etc/network/if-up.d/mount mode=a+x
+
+      #failed_when:
+       # - fstab_test.rc != 0
+       # - '"successfully mounted" not in fstab_test.stdout'
+
+    - name: Mount EBS into /ebs folder
+      become: yes
+        # sudo mount -t nfs4 -o vers=4.1 fs-43d9b1eb.efs.us-west-2.amazonaws.com:/ /var/www/html/magento/var
+      shell: mkdir -p /ebs && sudo file -s /dev/xvdf && echo "n" | sudo mkfs -t ext4 /dev/xvdf && sudo mount /dev/xvdf /ebs -t ext4
+      register: ebs
+      ##ToDo: add output checking
+      ignore_errors: True
+
+
+    # to ensure that our cachefiles service becomes aware of our newly mounted efs volume
+    - name: restart cachefilesd
+      become: yes
+      service:
+        name: cachefilesd
+        state: restarted
+
+    - name: Mount EFS volume
+      become: yes
+      mount:
+        name: "{{item.obj.efs.name}}"
+        path: "/var/www/html/magento/{{ item.mount }}"
+        src: '{{item.obj.efs.filesystem_address}}'
+        fstype: nfs4
+        opts: 'nfsvers=4.1'
+        state: mounted
+      with_items: "{{hostvars['localhost'].efs}}"
+      when: false
+
+    #Media folder to mig
+    - name: ensure chown on the mounted volume
+      become: yes
+      file:
+         path: "/var/www/html/magento/{{ item.mount }}"
+          #owner: '{{box_user}}'
+          #group: '{{box_group}}'
+         mode: 0777
+      with_items: "{{hostvars['localhost'].efs}}"
+      when: false

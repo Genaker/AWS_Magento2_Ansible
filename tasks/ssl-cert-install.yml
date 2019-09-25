@@ -1,0 +1,54 @@
+---
+
+    - raw: apt-get install -y python-simplejson
+
+    - apt_repository:
+        repo: 'ppa:certbot/certbot'
+
+    - name: install letsencrypt
+      apt: name=python-certbot-nginx state=latest
+
+    - name: create letsencrypt directory
+      file: name=/var/www/letsencrypt state=directory
+
+    - name: Remove default nginx config
+      file: name=/etc/nginx/sites-enabled/default state=absent
+
+    - name: Install system nginx config
+      template:
+        src: ../templates/nginx/letsencrypt/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+      #when: false
+
+    - name: Install nginx site for letsencrypt requests
+      template:
+        src: ../templates/nginx/letsencrypt/nginx-http.j2
+        dest: /etc/nginx/sites-enabled/http
+
+    - name: Reload nginx to activate letsencrypt site
+      service: name=nginx state=restarted
+
+    - name: Create letsencrypt certificate
+      become: true
+      shell: letsencrypt certonly -n --webroot -w /var/www/letsencrypt -m {{ letsencrypt_email }} --agree-tos -d {{ magento_domain }}
+      args:
+        creates: /etc/letsencrypt/live/{{ magento_domain }}
+
+    - name: Generate dhparams
+      shell: openssl dhparam -out /etc/nginx/dhparams.pem 2048
+      args:
+        creates: /etc/nginx/dhparams.pem
+
+    - name: Install nginx site for specified site
+      template:
+        src: ../templates/nginx/letsencrypt/nginx-le.j2
+        dest: /etc/nginx/sites-enabled/{{ magento_domain }}
+
+    - name: Reload nginx to activate specified site
+      service: name=nginx state=restarted
+
+    - name: Add letsencrypt cronjob for cert renewal
+      cron:
+        name: letsencrypt_renewal
+        special_time: weekly
+        job: letsencrypt --renew certonly -n --webroot -w /var/www/letsencrypt -m {{ letsencrypt_email }} --agree-tos -d {{ magento_domain }} && service nginx reload

@@ -1,0 +1,63 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+
+    - include_vars: variables.yaml
+
+    - name: Find AmI Ubuntu
+      ec2_ami_facts:
+        owners: 099720109477
+        region: "{{region}}"
+        filters:
+          name: "ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server-20180912*"
+      register: ami_find
+
+    - name: Provision a set of instances
+      ec2:
+        key_name: "{{ aws_key }}"
+        # group: test
+        instance_type: t2.medium
+        image: "{{ami_find.images[0].image_id}}"
+        region: "{{region}}"
+        vpc_subnet_id: "{{aws_subnet}}"
+        keypair: "{{aws_key}}"
+        wait: true
+        exact_count: 1
+        count_tag:
+          Name: "{{ ec2_name }}"
+        instance_tags:
+          Name: "{{ ec2_name }}"
+          Name2: test
+          Ansible: instance_tags
+        #ToDo: attach module in EC2
+        volumes:
+          - device_name: /dev/xvda
+            volume_type: gp2
+            volume_size: 60
+            delete_on_termination: true
+      register: ec2
+
+    - set_fact:
+        ec2: "{{ec2.instances}}  + {{ec2.tagged_instances}}"
+
+    - name: Debug merge EC2 created + and taged/existed 1
+      debug:
+        var: ec2
+
+    - name: Add the newly created host so that we can further contact it
+      add_host:
+        name: "{{ item.public_ip }}"
+        groups: aws
+        ec2_id: "{{ item.id }}"
+        when: item.public_ip is defined
+      with_items: "{{ ec2 }}"
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ item.public_ip }}"
+        port: 22
+        state: started
+      with_items: "{{ ec2 }}"

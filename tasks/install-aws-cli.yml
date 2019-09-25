@@ -1,0 +1,10 @@
+---
+
+    - name: Install AMAZON CLI
+      become: yes
+      shell: pip install awscli
+
+    - name: AWS Version
+      shell: aws --version
+      register: version
+

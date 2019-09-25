@@ -1,0 +1,197 @@
+---
+    - name: Create Launch Config
+      ec2_lc:
+          name: "{{ec2_lc_name}}"
+          #instance_id
+          image_id: "{{ami_find.images[0].image_id}}"
+          key_name: "{{aws_key}}"
+          region: "{{ region }}"
+          security_groups: "{{ web_new_group.group_id }}"
+          instance_type: m1.small
+          assign_public_ip: yes
+        #when: ami is defined
+  ## ToDo: set heals check to /health_check.php
+    - name: Create ELB Target Group
+      elb_target_group:
+          region: "{{region}}"
+          name: "{{ ec2_elb_target_group_name }}-80"
+          state: present
+          protocol: http
+          port: 80
+          vpc_id: "{{ aws_vpc }}"
+      register: app_tg
+
+    - name: Create ELB Target Group 433
+      elb_target_group:
+        region: "{{region}}"
+        name: "{{ ec2_elb_target_group_name }}-443"
+        state: present
+        protocol: http
+        port: 443
+        vpc_id: "{{ aws_vpc }}"
+      register: app_tg
+
+    - name: Create ELB Target Group 8888
+      elb_target_group:
+        region: "{{region}}"
+        name: "{{ ec2_elb_target_group_name }}-8888"
+        state: present
+        protocol: http
+        port: 8888
+        vpc_id: "{{ aws_vpc }}"
+      register: app_tg
+
+    - debug:
+        var: app_tg
+
+    ## /home/genaker/ansible/tasks/install-aws-cli.yml
+    - import_tasks: tasks/install-aws-cli.yml
+
+    # create SubjectAlternativeNames
+    #aws acm request-certificate --domain-name {{ magento_domain }} --validation-method DNS
+    - name: Generate  SSL for domain in Route 54 Zone
+      #become: yes
+      # todo: --idempotency-token  --subject-alternative-names
+      command: aws acm request-certificate --domain-name {{ magento_domain }} --validation-method DNS
+      register: certificate
+
+    - name: Set Facts SSL
+      set_fact:
+        ssl_cert: "{{ certificate.stdout|from_json }}"
+
+    - name: Generate  SSL for domain in Route 54 Zone
+        #become: yes
+      command: aws acm  describe-certificate --certificate-arn {{ ssl_cert.CertificateArn }}
+      register: certificate_validate_token
+
+    - name: Set Facts SSL cname token
+      set_fact:
+        ssl_dns_cname_verification: "{{ certificate_validate_token|json}}"
+      when: false
+        ##Certificate.DomainValidationOptions[0].ResourceRecord
+
+
+    #aws ses verify-domain-identity --domain {{ magento_domain }} it is FOR EMAI AMAzon
+    - name: GET DNS Verification TEXT
+      #become: yes
+      command: aws ses verify-domain-identity --domain {{ magento_domain }}
+      register: dns_verification
+
+
+    - name: Set Facts DNS
+      set_fact:
+        dns_text: "{{ dns_verification.stdout|from_json }}"
+
+        # Add Text record  with Amazon SES Simple Email Service DNS verification
+    - name: "Route 53 DNS TXT verification SET"
+      route53:
+       state: present
+       zone: ????
+       record: "{{ magento_domain }}"
+       type: TXT
+       value: '"{{ dns_text.VerificationToken }}"'
+       overwrite: yes
+       wait: yes
+
+    - name: Application Load Ballanser Create
+      elb_application_lb:
+        #access_logs_enabled: yes
+        #access_logs_s3_bucket: mybucket
+        #access_logs_s3_prefix: "/logs"
+        region: "{{region}}"
+        name: "{{ ec2_elb_name }}"
+        security_groups: "{{ web_new_group.group_id }}"
+        subnets:
+          - "{{aws_subnet}}"
+          - "{{aws_subnet2}}"
+        listeners:
+          #use base HTTPS SSL needs  confirm certificate mannualy in Rout 53
+          ## or implement https://dzone.com/articles/automating-letsencrypt-certificate-generation-with
+          ## or https://botocore.amazonaws.com/v1/documentation/api/latest/reference/services/acm.html#ACM.Client.describe_certificate
+          - Protocol: HTTP # Required. The protocol for connections from clients to the load balancer (HTTP or HTTPS) (case-sensitive).
+            Port: 443 # Required. The port on which the load balancer is listening.
+            DefaultActions:
+              - Type: forward # Required. Only 'forward' is accepted at this time
+                ##uSING NOT SECURE PROTOCOL BEATWING INSTANCES
+                TargetGroupName: "{{ ec2_elb_target_group_name }}-80"
+           # SslPolicy: ELBSecurityPolicy-2015-05
+            #Certificates:
+              #- CertificateArn: "{{ssl_cert.CertificateArn}}"
+
+          - Protocol: HTTP # Required. The protocol for connections from clients to the load balancer (HTTP or HTTPS) (case-sensitive).
+            Port: 80 # Required. The port on which the load balancer is listening.
+            DefaultActions:
+              - Type: forward # Required. Only 'forward' is accepted at this time
+                TargetGroupName: "{{ ec2_elb_target_group_name }}-80"
+
+          #use base HTTPS SSL needs  confirm certificate mannualy in Rout 53
+          - Protocol: HTTP # Required. The protocol for connections from clients to the load balancer (HTTP or HTTPS) (case-sensitive).
+            Port: 8888 # Required. The port on which the load balancer is listening.
+            DefaultActions:
+              - Type: forward # Required. Only 'forward' is accepted at this time
+                TargetGroupName: "{{ ec2_elb_target_group_name }}-8888"
+            #SslPolicy: ELBSecurityPolicy-2015-05
+            #Certificates:
+               # - CertificateArn: "{{ssl_cert.CertificateArn}}"
+
+
+            # The security policy that defines which ciphers and protocols are supported. The default is the current predefined security policy.
+            #SslPolicy: ELBSecurityPolicy-2015-05
+            #Certificates: # The ARN of the certificate (only one certficate ARN should be provided)
+            #- CertificateArn: arn:aws:iam::12345678987:server-certificate/test.domain.com
+        purge_listeners: no
+        state: present
+        tags:
+          Name: "{{ ec2_elb_name }}"
+          Name2: test
+          test: test
+          Ansible: ansible
+          infrastructure: "{{infrastructure_name}}"
+          version: "{{infrastructure_version}}"
+      register: elb
+
+
+    - debug:
+        var: elb
+
+    # Add an alias record that points to an Amazon ELB:
+    - route53:
+        state: present
+        zone: ????
+        record: "{{ magento_domain }}"
+        type: A
+        value: "{{ elb.dns_name }}"
+        alias: True
+        overwrite: yes
+        alias_hosted_zone_id: "{{ elb.canonical_hosted_zone_id }}"
+
+    - name: Auto Scalling Group Create
+      ec2_asg:
+        name: "{{ ec2_asg_name }}"
+        launch_config_name: "{{ec2_lc_name}}"
+        ##ToDo - Target Groups
+        target_group_arns: ["{{app_tg.target_group_arn}}"]
+        health_check_period: 60
+        health_check_type: ELB
+        replace_all_instances: yes
+        min_size: "{{ asg_min_size }}"
+        max_size: "{{ asg_max_size }}"
+        #viable_instances: 1
+        desired_capacity: "{{ ec2_desired_capacity }}"
+        wait_for_instances: no
+        #wait_timeout: 600
+        state: present
+        vpc_zone_identifier: ["{{aws_subnet}}"]
+        region: "{{ region }}"
+        tags:
+          - Name: "{{ ec2_asg_name }}"
+          - Name2: test
+          - test: test
+          - Ansible: ansible
+          - infrastructure: "{{infrastructure_name}}"
+          - version: "{{infrastructure_version}}"
+      register: scalling_group
+
+    - name: "Auto scaling Group"
+      debug:
+        var: scalling_group

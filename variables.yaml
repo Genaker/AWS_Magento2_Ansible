@@ -1,0 +1,93 @@
+---
+##change!!
+region: us-west-2
+main_region: us-west-1
+ami_image: ami-0ad16744583f21877
+##change!!
+aws_subnet: ??
+##change!!
+aws_subnet2: ??
+##change!!
+aws_subnet_group: ??
+aws_key: ???
+##change
+aws_vpc: ???
+aws_account:  ???
+instance_type: c4.xlarge
+
+aws_security_group: ansibleweb2
+
+
+aws_cli_key:
+  AWS_ACCESS_KEY_ID: ???
+  AWS_SECRET_ACCESS_KEY: ???
+  AWS_DEFAULT_REGION: us-west-2
+  default.s3.max_concurrent_requests: 200
+  default.s3.max_queue_size: 10000
+  default.s3.multipart_threshold: 64MB
+  default.s3.multipart_chunksize: 16MB
+  default.s3.use_accelerate_endpoint: false
+  default.s3.addressing_style: path
+
+debug: false
+prod_mysql_host: ??
+prod_mysql_user: ??
+prod_mysql_password: ??
+prod_mysql_db: ??
+
+copy_mysql_host: ??
+copy_mysql_user: ??
+copy_mysql_password: ??
+copy_mysql_db: ??
+copy_mysql_snap_name: ??
+
+git_token: ??
+
+git_branch: ??
+git_user: ??
+git_password: ??
+
+session_redis_host: ??
+cache_redis_host: ??
+
+magento_repo_api_key: ??
+magento_repo_secret_key: ??
+
+magento_backend_name: ??
+magento_domain: ??
+magento_install_path: /var/www/html/magento
+magento_media_local_deploy: true
+build_path: /var/www/html/build
+ec2_name: Demo
+host_name: varnish
+# launch_configuration
+ec2_lc_name: LaunchingConfig
+ec2_elb_name: LoadBalancer1
+ec2_elb_target_group_name: TargetGroup
+ec2_asg_name: AutoScalingGr
+ec2_tags_delete: test
+# - Web - WebAdmin -Varnish
+infrastructure_name: Web
+infrastructure_version: 1
+ec2_desired_capacity: 1
+asg_min_size: 1
+asg_max_size: 2
+
+magento_conf:
+  web/unsecure/base_url: '??'
+  web/unsecure/base_static_url: '??'
+  web/unsecure/base_media_url: '??'
+  web/unsecure/base_link_url: '??'
+  web/secure/base_url: '??'
+  web/secure/base_static_url: '??'
+  web/secure/base_media_url: '??'
+  web/cookie/cookie_domain: '??'
+  web/secure/use_in_frontend: 0
+  web/secure/use_in_adminhtml: 0
+
+use_secure: "{{magento_conf.web/secure/use_in_frontend}}"
+delete_prompt: no
+source_db_name: ??
+snapshot_name: testsnapshot
+
+letsencrypt_email: ???

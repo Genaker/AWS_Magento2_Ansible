@@ -1,0 +1,37 @@
+---
+
+    - name: EC2 Facts For Delete
+    ec2_instance_facts:
+      region: "{{region}}"
+      filters:
+        "tag:Name2": "test"
+    register: ec2_for_delete
+
+    - name: "Debug for delete {{ ec2_for_delete.instances|length }}"
+      debug:
+        var: ec2_for_delete
+      when: debug == true
+
+    - name: Kill EC2 Instance
+      ec2:
+        instance_ids: "{{ item.instance_id }}"
+        state: absent
+        region: "{{region}}"
+      with_items: "{{ ec2_for_delete.instances}}"
+      register: deleted
+      when: delete_prompt == true
+
+    - name: "Debug deleted items"
+      debug:
+        var: deleted
+      when: delete_prompt == true
+
+    - name: Copy nginx configuration for Magento
+      template: src=default.conf dest=/etc/nginx/conf.d/default.conf
+      notify: restart nginx
+      when: false
+
+    - debug:
+        msg: "EC2 {{ item.public_dns_name}} deleted"
+      with_items: deleted.deleted.result.instances
+      when: delete_prompt == "true" and deleted.deleted.result.instances is defined

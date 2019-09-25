@@ -1,0 +1,14 @@
+ upstream fastcgi_backend {
+                server  unix:/run/php/php7.1-fpm.sock;
+ }
+
+ #Default server configuration
+ server {
+                server_name _;
+
+                listen 80;
+
+                set $MAGE_ROOT {{item}};
+
+                include {{item}}/nginx.conf.sample;
+ }

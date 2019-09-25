@@ -1,0 +1,87 @@
+---
+    - name: Find AmI Ubuntu
+      ec2_ami_facts:
+        owners: 099720109477
+        region: "{{region}}"
+        filters:
+           name: "ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server-20180912*"
+      register: ami_find
+
+    - name: Debug instance
+      debug:
+          var: ami_find
+
+    - name: Subnet AWS list
+      ec2_vpc_subnet_facts: 
+         region: "{{region}}"
+      register: subnet
+
+    - name: Debug AWS LIST
+      debug:
+          var: subnet
+
+    - name: Security Group List AWS for VPC
+      ec2_group_facts:
+        region: "{{region}}"
+        filters:
+          #vpc-id: "{{aws_vpc}}"
+          group-name: "{{aws_security_group | lower }}"
+      register: sec_groups
+
+    - name: Debug Security Group
+      debug:
+         var: sec_groups
+
+    - name: Create Elasticache Subnet Group
+      elasticache_subnet_group:
+        state: present
+        name: "elastick-subnet"
+        description: "Elasticache for DSAd"
+        region: "{{ region }}"
+        subnets:
+          - "{{aws_subnet}}"
+          - "{{aws_subnet2}}"
+
+  
+    - name: Install Redis Session
+      elasticache:
+        name: "RedisTEst-Session"
+        state: present
+        engine: redis
+        region: "{{region}}"
+        cache_engine_version: 5.0.0
+        node_type: cache.m3.medium
+        cache_subnet_group: "elastick-subnet"
+        #num_nodes: 2
+        #memchache 11211
+        ##"{% if elasticache_engine == 'redis' %}6379{% elif elasticache_engine == 'memcached' %}11211{% endif %}"
+        cache_port: 6379
+        #security_group_ids: ["{{ sec_groups.security_groups[0].group_id }}"]
+        #cache_security_groups:
+         #- "{{aws_security_group}}"
+        zone: "{{ region }}a"
+      register: redis_session
+
+    - name: Debug Redis Session
+      debug:
+        var: redis_session
+
+    - name: Install Redis Cache
+      elasticache:
+        name: "RedisTEst-Cache"
+        state: present
+        engine: redis
+        region: "{{region}}"
+        cache_engine_version: 5.0.0
+        node_type: cache.m3.medium
+        cache_subnet_group: "elastick-subnet"
+        #num_nodes: 2
+        #memchache 11211
+        cache_port: 6379
+        security_group_ids: []
+        #cache_security_groups:
+         #- "{{aws_security_group}}"
+        zone: "{{ region }}a"
+      register: redis_cache
+
+

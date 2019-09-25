@@ -1,0 +1,104 @@
+- hosts: aws
+  gather_facts: False
+  become: yes
+
+  pre_tasks:
+    - name: Install python for Ansible
+      become: yes
+      raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal) || apt-get install -y --reinstall python-minimal
+      register: output
+      changed_when: output.stdout != ""
+    - setup: # aka gather_facts
+  tasks:
+    - ping:
+
+    - include_vars: ../variables.yaml
+
+    - name: Upgrade system
+      apt: upgrade=dist update_cache=yes
+
+    - name: PIP SETUP
+      shell: apt install -y python-pip
+      become: yes
+
+    - name: Install AMAZON CLI
+      become: yes
+      shell:  pip install awscli --upgrade --user
+
+    - name: Install NGINX TOP
+      become: yes
+      shell:  pip install ngxtop
+
+    - name: Install NGING and VARNISH
+      become: yes
+      apt:
+        pkg:
+          - nginx
+          - varnish # it is old 4v better update to new 6 or 5
+          - htop
+        state: present
+
+    - name: remove default nginx.conf
+        become: yes
+        shell: "rm -f /etc/nginx/sites-enabled/default"
+
+
+    - name: Copy Index file
+      become: yes
+      template:
+        src: ../templates/nginx/index.html.j2
+        dest: /var/www/html/index.html
+        backup: yes
+
+    - name: Copy Varnish Params file
+      become: yes
+      copy:
+        src: ../templates/varnish/varnish.params
+        dest: /etc/default/varnish
+        backup: yes
+      when: false
+
+    #bugg
+    - name: Copy Varnish config file
+      become: yes
+      copy:
+        src: ../templates/varnish/varnish.service
+        dest: /etc/systemd/system/varnish.service
+        backup: yes
+      when: false
+
+    - name: Copy Varnish default.vcl file
+      become: yes
+      copy:
+        src: ../templates/varnish/default.vcl
+        dest: /etc/varnish/default.vcl
+        backup: yes
+
+    - name: Install nginx config for specified site
+      template:
+        src: ../templates/nginx/letsencrypt/nginx-le.j2
+        dest: /etc/nginx/sites-enabled/{{ magento_domain }}
+
+    - name: Reload nginx to activate specified site
+      service: name=nginx state=restarted
+
+    #systemctl daemon-reload
+    #sudo systemctl reload varnish.service
+    #service varnish restart
+
+    - name: SSH reload varnish
+      become: yes
+      shell: systemctl daemon-reload && systemctl reload varnish.service && service varnish restart
+
+    #to do setup varnish admin dasboard  https://github.com/brandonwamboldt/varnish-dashboard
+    - name: start varnish
+      service:
+        name: varnish
+        state: started
+
+    - name: start nginx
+      service:
+        name: nginx
+        state: started
+
+    #- import_tasks: ssl-cert-install.yml

@@ -1,0 +1,108 @@
+
+    - name: EFS for var Folder
+      efs:
+        state: present
+        name: myTestEFS-var
+        region: "{{ region }}"
+        performance_mode: max_io
+        tags:
+          Name: myTestEFS-var
+          Nane2: test
+          purpose: file-storage
+        targets:
+          - subnet_id: "{{aws_subnet}}"
+            security_groups: [ "{{ web_new_group.group_id }}" ]
+      register: efs_var
+
+    - name: EFS for app Folder
+      efs:
+        state: present
+        name: myTestEFS-app-etc
+        region: "{{ region }}"
+        performance_mode: max_io
+        tags:
+          Name: myTestEFS-app
+          Nane2: test
+          purpose: file-storage
+        targets:
+          - subnet_id: "{{aws_subnet}}"
+            security_groups: [ "{{ web_new_group.group_id }}" ]
+      register: efs_app
+
+    - name: EFS for pub Folder
+      efs:
+        state: present
+        name: myTestEFS-pub-static
+        region: "{{ region }}"
+        performance_mode: max_io
+        tags:
+          Name: myTestEFS-pub
+          Nane2: test
+          purpose: file-storage
+        targets:
+          - subnet_id: "{{aws_subnet}}"
+            security_groups: [ "{{ web_new_group.group_id }}" ]
+      register: efs_pub_stat
+
+    - name: EFS for pub Folder
+      efs:
+        state: present
+        name: myTestEFS-pub-media
+        region: "{{ region }}"
+        performance_mode: max_io
+        tags:
+          Name: myTestEFS-pub
+          Nane2: test
+          purpose: file-storage
+        targets:
+          - subnet_id: "{{aws_subnet}}"
+            security_groups: [ "{{ web_new_group.group_id }}" ]
+      register: efs_pub_media
+
+    - name: EFS for code Folder
+      efs:
+        state: present
+        name: myTestEFS-code
+        region: "{{ region }}"
+        performance_mode: max_io
+        tags:
+          Name: myTestEFS-code
+          Nane2: test
+          purpose: file-storage
+        targets:
+          - subnet_id: "{{aws_subnet}}"
+            security_groups: [ "{{ web_new_group.group_id }}" ]
+      register: efs_code
+
+    - name: EFS for TMP Folder
+      efs:
+        state: present
+        name: myTestEFS-tmp
+        region: "{{ region }}"
+        performance_mode: max_io
+        tags:
+          Name: myTestEFS-tmp
+          Nane2: test
+          purpose: file-storage
+        targets:
+          - subnet_id: "{{aws_subnet}}"
+            security_groups: [ "{{ web_new_group.group_id }}" ]
+      register: efs_tmp
+
+    - set_fact:
+        efs:
+          - mount: var
+            obj: "{{ efs_var }}"
+          - mount: app/etc
+            obj: "{{ efs_app }}"
+          - mount: pub/media
+            obj: "{{ efs_pub_media }}"
+          - mount: code
+            obj: "{{ efs_code }}"
+          - mount: ../tmp
+            obj: "{{ efs_tmp }}"
+
+    - name: List EFS
+      debug:
+        var: efs
+

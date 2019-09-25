@@ -1,0 +1,199 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+
+    - include_vars: variables.yaml
+
+    - name: Take RDS snapshot
+      rds:
+        command: snapshot
+        region: "{{ main_region }}"
+        instance_name: "{{ source_db_name }}"
+        snapshot: "{{ snapshot_name }}"
+        wait: no
+      #wait_timeout: 9000
+      register: snapshot_out
+
+    - name: "Snapshot"
+      debug:
+        var: snapshot_out
+
+    - name: AWS_DEFAULT_REGION
+      raw: "export AWS_DEFAULT_REGION={{ region }}"
+
+    - name: Snapshot Facts Get
+      rds_snapshot_facts:
+        db_snapshot_identifier: "{{ snapshot_name }}"
+        region: "{{main_region}}"
+      register: snapshot
+
+
+    - name: Snapshot List
+      debug:
+        var: snapshot
+
+    # Copy Snapshot and wait until available
+    - name: Copy Snapshot and not wait until available
+      command: >
+        aws rds copy-db-snapshot
+        --source-db-snapshot-identifier "{{ snapshot.snapshots[0].db_snapshot_arn }}"
+        --region "{{ region }}"
+        --target-db-snapshot-identifier "{{snapshot_name}}-copy2"
+      register: snapshot_id
+      ignore_errors: true
+
+      #aws ec2 modify-snapshot-attribute --snapshot-id "{{ snapshot.snapshots[0].db_snapshot_identifier }}" --attribute createVolumePermission --operation-type add --user-ids "{{ aws_account }}"
+
+    - rds_param_group:
+        state: present
+        name: ParameterGroupMYSQL
+        region: "{{ region }}"
+        description: 'arameterGroupMYSQL Parrot Group'
+        engine: mysql5.7
+        params:
+          log_bin_trust_function_creators: 1
+          innodb_file_per_table: 0
+          long_query_time: 1
+          innodb_log_buffer_size: 128M
+          innodb_log_file_size: 1G
+          innodb_write_io_threads: 16
+          innodb_flush_log_at_trx_commit: 0
+          query_cache_size: 10000
+          query_cache_type: 1
+          query_cache_wlock_invalidate: 1
+        tags:
+          Name2: test
+          Environment: production
+          Application: parrot
+
+    - name: Restore RDS from snapshot
+      rds:
+          command: restore
+          snapshot: "{{copy_mysql_snap_name}}"
+          instance_name: "{{copy_mysql_snap_name}}-new"
+          region: "{{ region }}"
+          zone: "{{ region }}c"
+          subnet: "{{aws_subnet_group}}"
+          instance_type: db.m4.xlarge
+          db_engine: MySQL
+          #engine_version: 5.7
+          iops: 1001
+          #parameter_group: ParameterGroupMYSQL
+          #subnet:
+          publicly_accessible: yes
+          wait: no
+          #wait_timeout: 1200
+          tags:
+            Name2: test
+      register: rds_new
+      when: copy_mysql_snap_name is defined
+
+    - rds_param_group:
+        state: present
+        name: ParameterGroupMariaDB
+        description: 'ParameterGroupMariaDB Parrot Group'
+        region: "{{ region }}"
+        #mysql5.7
+        engine: mariadb10.1
+        params:
+          log_bin_trust_function_creators: 1
+          innodb_file_per_table: 0
+          long_query_time: 1
+          innodb_log_buffer_size: 128M
+          innodb_log_file_size: 1G
+          innodb_write_io_threads: 16
+          innodb_flush_log_at_trx_commit: 0
+          query_cache_size: 10000
+          query_cache_type: 1
+          query_cache_wlock_invalidate: 1
+        tags:
+          Name2: test
+          Environment: production
+          Application: parrot
+
+
+    - name: Create RDS Instance
+      rds:
+        command: create
+        db_name: Magento2
+        region: "{{ region }}"
+        zone: "{{ region }}c"
+        subnet: "{{aws_subnet_group}}"
+        instance_name: magento-test-env
+        db_engine: mariadb
+        engine_version: 10.1
+        size: 120
+        instance_type: db.t2.large
+        username: ??
+        password: ??
+        parameter_group: ParameterGroupMariaDB
+        publicly_accessible: yes
+        #vpc_security_groups: "{{ aws_sg.group_id }}"
+        tags:
+          Environment: test
+          Name: RDS MARIADB
+          Name2: test
+        wait: yes
+        wait_timeout: 1200
+
+      register: rds_instance
+    - debug:
+        var: rds_instance
+
+    - name: Install MYsQL Python
+      become: yes
+      apt:
+        pkg:
+          - python-dev
+          - libmysqlclient-dev
+          - python-mysqldb
+          - python-pymysql
+          - mysql-client
+
+        state: present
+
+    - name: Check that the dump.sql exists
+      stat:
+        path: /tmp/{{prod_mysql_db}}_production_dump.sql
+      register: dump_exist
+
+
+    - name: Dump all databases to hostname.sql
+      mysql_db:
+        login_host: "{{prod_mysql_host}}"
+        login_user: "{{prod_mysql_user}}"
+        login_password: "{{prod_mysql_password}}"
+        state: dump
+        name: "{{prod_mysql_db}}"
+        target: /tmp/{{prod_mysql_db}}_production_dump.sql
+      when: dump_exist.stat.exists == False
+
+    - debug:
+        var: magento_conf
+
+    - name: Fix SQL DUMP File
+      shell: sed 's/\sDEFINER=`[^`]*`@`[^`]*`//g' -i /tmp/{{prod_mysql_db}}_production_dump.sql
+      when: dump_exist.stat.exists == False
+
+    - name: SET foreign_key_checks = 0
+      shell: mysql -h {{ copy_mysql_host }} -u {{ copy_mysql_user }} -p{{ copy_mysql_password }} {{ copy_mysql_db }} -Ns \
+        -e "SET foreign_key_checks = 0;"
+
+    - name: Restore database
+      mysql_db:
+        login_host: "{{copy_mysql_host}}"
+        login_user: "{{copy_mysql_user}}"
+        login_password: "{{copy_mysql_password}}"
+        name:  "{{copy_mysql_db}}"
+        state: import
+        target:  /tmp/{{prod_mysql_db}}_production_dump.sql
+      when: copy_mysql_snap_name is not defined
+
+    - name: SET foreign_key_checks = 1
+      shell: mysql -h {{copy_mysql_host}} -u {{ copy_mysql_user }} -p{{ copy_mysql_password }} {{ copy_mysql_db }} -Ns \
+        -e "SET foreign_key_checks = 1;"
+
+

@@ -1,0 +1,27 @@
+server {
+listen 8888;
+server_name _; #{{ magento_domain }} localhost; for future may be better to have domain
+
+## set $host2 {{ magento_domain }}; for varnish health check mut we don't use it
+
+root var/www/html;
+index index.html index.htm;
+
+location / {
+
+allow all;
+proxy_pass http://{{ elb_web_node_ip }};
+proxy_set_header X-Real-IP  $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+    {% if use_secure == 1 %}
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Port 443;
+    proxy_set_header  Front-End-Https  on;
+    {% endif %}
+
+## proxy_set_header Host $host2; for varnish health check
+proxy_pass_header Server;
+
+}
+}

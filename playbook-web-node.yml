@@ -1,0 +1,99 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+
+    - include_vars: variables.yaml
+
+    - name:  "Set Infrastructure Name and Version"
+      set_fact:
+        infrastructure_name: WebAdmin
+        infrastructure_version: 1
+
+    - set_fact:
+        ec2_name: "{{ec2_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        host_name: Web
+        # launch_configuration
+        ec2_lc_name: "{{ec2_lc_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_elb_name: "{{ec2_elb_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_elb_target_group_name: "{{ec2_elb_target_group_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_asg_name: "{{ec2_asg_name}}-{{infrastructure_name}}-Vers{{infrastructure_version}}"
+        ec2_desired_capacity: 1
+        asg_min_size: 1
+        asg_max_size: 3
+        magento_domain: ??
+        magento_conf:
+          web/unsecure/base_url: ??
+          web/unsecure/base_static_url: ??
+          web/unsecure/base_media_url: ??
+          web/unsecure/base_link_url: ??
+          web/secure/base_url: ??
+          web/secure/base_link_url: ??
+          web/secure/base_static_url: ??
+          web/secure/base_media_url: ??
+          web/secure/use_in_frontend: 0
+          web/secure/use_in_adminhtml: 0
+          web/cookie/cookie_domain: ??
+
+    - name: Debug Var
+      debug:
+        var: vars
+
+    - name: Prevent Key Asking
+      shell: export ANSIBLE_HOST_KEY_CHECKING=False
+
+    - import_tasks: tasks/ec2-inst-create.yml
+
+    - name: Debug Var
+      debug:
+        var: ec2
+
+    - name: SET WEB Nodes EC2 instanc
+      set_fact:
+        aws_varnish: ec2
+
+    - import_tasks: install-efs.yml
+
+- import_playbook: mount-ntfs.yml
+
+- import_playbook: install-web.yml
+
+- import_playbook: install-magento.yml
+
+- hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+
+    - name: Debug Var
+      debug:
+         var: vars
+
+    # - import_tasks: tasks/image-create.yml
+
+    # - import_tasks: tasks/auto-scalling.yml
+
+    - name: Get ELB Web Nodes
+      ec2_elb_facts:
+        region: "{{region}}"
+        names: "{{ec2_elb_name}}-Web-Vers{{infrastructure_version}}"
+      register: elb_web_nodes
+
+    - name: Debug ELB WEB
+      debug:
+        var: elb_web_nodes
+
+    - name:
+      set_fact:
+        elb_web_node_ip: LoadBallanser1-23408517.us-west-2.elb.amazonaws.com
+      when: false
+
+    - name: Install system nginx config
+      template:
+          src: ../templates/nginx/letsencrypt/elb.conf.j2
+          dest: /etc/nginx/sites-enabled/elb
+      delegate_to: elb_web_nodes[0].public_ip
+      when: false

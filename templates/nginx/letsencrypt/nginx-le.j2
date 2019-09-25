@@ -1,0 +1,50 @@
+#
+# HTTPS server
+#
+server {
+    listen 80;
+    server_name _; #{{ magento_domain }};
+
+    location / {
+
+        allow all;
+        proxy_pass http://127.0.0.1:6081;
+        proxy_set_header X-Real-IP  $remote_addr;
+
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        {% if use_secure == 1 %}
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Port 443;
+            proxy_set_header  Front-End-Https  on;
+        {% endif %}
+        proxy_set_header Host $host;
+        proxy_pass_header Server;
+
+    }
+
+    }
+
+server {
+        listen 8080;
+        server_name {{ magento_domain }};
+
+        root /var/www/html;
+        index index.html index.htm;
+
+        location / {
+        try_files $uri $uri/ =404;
+        }
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    root /var/www/html;
+    index index.html index.htm;
+
+    location / {
+    try_files $uri $uri/ =404;
+    }
+
+}

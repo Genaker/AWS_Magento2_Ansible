@@ -1,0 +1,15 @@
+---
+
+- import_playbook: playbook-get-aws.yml
+
+- hosts: aws
+  gather_facts: False
+  #become_user: root
+
+  tasks:
+    - include_vars: variables.yaml
+    #- ping:
+
+    - import_tasks: install-magento.yml
+
+

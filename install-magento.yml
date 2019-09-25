@@ -1,0 +1,307 @@
+---
+- hosts: aws
+  gather_facts: False
+  become: yes
+
+  pre_tasks:
+    - name: Install python for Ansible
+      become: yes
+      raw: test -e /usr/bin/python || (sudo apt -y update && apt install -y python-minimal)
+      register: output
+      changed_when: output.stdout != ""
+    - setup: # aka gather_facts
+  tasks:
+    - ping:
+
+    - include_vars: variables.yaml
+
+    - set_fact:
+        magento_domain: "{{hostvars['localhost']['magento_domain']}}"
+
+    - name: Debug VARS
+      debug:
+        var: vars
+
+    - name: Install apt modules PIP, S3SF, AWSCLI
+      become: yes
+      apt:
+        pkg:
+          - python-pip
+          - s3fs
+          - awscli
+
+    - name: Set AWS env Keys
+      shell: aws configure set {{item.key}} "{{item.value}}"
+      with_dict: "{{aws_cli_key}}"
+
+    - name: S3FS key
+      shell: echo {{aws_cli_key.AWS_ACCESS_KEY_ID}}:{{aws_cli_key.AWS_SECRET_ACCESS_KEY}} >>  ~/.passwd-s3fs && chmod 600  ~/.passwd-s3fs
+
+    - name: SET option allow_other only allowed if 'user_allow_other'
+      become: true
+      lineinfile:
+        path: /etc/fuse.conf
+        regexp: '^#user_allow_other'
+        line: 'user_allow_other'
+        state: present
+
+    - name: Ansible check directory exists example.
+      stat:
+        path: /s3
+      register: s3_exist
+
+
+    - name: S3 media Sync directory create
+      become: yes
+      shell: mkdir -p /tmp/s3 && mkdir -p /s3 && chmod -R 777 /s3
+      when: s3_exist.stat.exists == false
+
+    ## ToDo: Error: s3fs: specified passwd_file is not readable. not mounted
+    - name: S3FS Create
+      become: yes
+      shell: s3fs ??bucketName?? /s3 -o passwd_file=/home/ubuntu/.passwd-s3fs -o allow_other -o umask=0022 -o retries=5 -o nonempty #-o use_cache=/tmp/s3
+      when: s3_exist.stat.exists == false
+
+    #_netdev = Mount after network is 'up'
+    - name: FSTAB create
+      become: yes
+      # mybucket2.mydomain.org /mnt/mybucket2 fuse.s3fs _netdev,allow_other,passwd_file=/home/ftpuser/.passwd-aws-s3fs,default_acl=public-read,uid=1001,gid=65534   0 0
+      shell: >
+          echo "??bucket name?? /s3 fuse.s3fs passwd_file=/home/ubuntu/.passwd-s3fs,_netdev,allow_other,umask=0022,retries=5,nonempty   0 0" >> /etc/fstab
+
+    # This is just like a refresh command to activate the entries in fstab.
+    - name: FSTAB test
+      become: yes
+      shell: mount -fav
+      register: mount_fstub_test
+      failed_when:
+        - mount_fstub_test.rc != 0
+        - '"successfully mounted" not in mount_fstub_test.stdout'
+
+
+    #dont do sync to slow
+    - name: S3 media Sync
+      #aws s3 --region <your region name> sync s3://<your bucket name> /your/directory/path
+      # Sync to EFS folder because of  speed and size
+      shell: aws s3 --region {{region}} sync s3://??Bucket name?? {{magento_install_path}}/pub/media
+      when: false and magento_media_local_deploy
+      async: 60
+      poll: 0
+
+
+    - name: Adding user ubuntu to group www-data
+      become: yes
+      user: name=ubuntu
+            groups=www-data
+            append=yes
+
+    - shell: "rm -rf {{build_path}} && mkdir -p {{build_path}}"
+      become: yes
+      #when: false
+
+    - name: Set Permission for group
+      become: yes
+      shell: "chown -R www-data: {{build_path}} && chmod -R 777 {{build_path}} &&  chown -R www-data:www-data ~/."
+
+    - name: Set your Magento repo global config using composer
+      ##become: yes ## from sudo doesn't work
+      command: composer global config http-basic.repo.magento.com {{ magento_repo_api_key }} {{ magento_repo_secret_key }}
+
+    ##~/.composer/auth.json alternative
+    - name: Create composer auth file
+      template:
+        src: composer/auth.json.j2
+        dest: ~/.composer/auth.json
+        backup: yes
+      with_items:
+          - "{{magento_install_path}}"
+      when: false
+
+
+    - name: restart PHP-FPM \#1
+      become: yes
+      service:
+          name: php7.1-fpm
+          state: restarted
+
+    - name: Git Init
+      #toDo: --separate-git-dir="{{magento_instal_path}}"/.. or exclude from fpsync
+      #git remote add origin https://<token>@github.com/owner/repo.git
+      become: yes
+      shell: git init  && git remote add origin https://{{ git_token }}@github.com/????/magento2.git
+      args:
+        chdir: "{{build_path}}"
+      register: git
+      failed_when:
+        - git.rc != 0
+        #already exist
+        - git.rc != 128
+
+    - name: Git Credentials SET
+      become: true
+      shell: git config credential.helper store && git config user.name genaker && git config user.password *****
+      args:
+        chdir: "{{build_path}}"
+
+    - name: Git PULL
+      shell: git pull origin {{git_branch}}
+      args:
+        chdir: "{{build_path}}"
+
+    ## ToDo: Add Shared EFS or S3 composer cache folder
+
+    - name: Magento Composer Update
+      command: composer install
+      args:
+        chdir: "{{build_path}}"
+      register: composer_result
+      failed_when :
+        - composer_result.rc != 0
+        - "'Nothing to install or update' not in composer_result.stderr"
+
+    ##ToDo: This script created for existed project with database, add Magento2 install forom scratch
+
+
+# Update sshd configuration safely, avoid locking yourself out
+    - name: Create ENV PHP file
+      template:
+        src: magento/app/etc/env.j2
+        dest: "{{build_path}}/app/etc/env.php"
+        backup: yes
+
+    - name: magento setup upgrade
+      shell: php bin/magento setup:upgrade
+      args:
+        chdir: "{{build_path}}"
+      async: 60
+      poll: 0
+      register: magento_setup
+
+      #php bin/magento setup:di:compile
+
+    - name: Generated code and dependency injection configuration
+      become: yes
+      shell: php bin/magento setup:di:compile
+      args:
+        chdir: "{{build_path}}"
+      async: 60
+      poll: 0
+      register: magento_compile
+
+    - set_fact:
+        magento_mode: production
+
+    - debug:
+        var: magento_conf
+
+
+    - name: Install Magento Configuration
+      shell: mysql -h {{copy_mysql_host}} -u {{ copy_mysql_user }} -p{{ copy_mysql_password }} {{ copy_mysql_db }} -Ns \
+        -e "UPDATE core_config_data SET value = '{{item.value}}' WHERE path IN ('{{item.key}}');"
+      with_dict: "{{hostvars['localhost'].magento_conf}}"
+      tags:
+        - mysql
+      delegate_to: localhost
+      register: mysql_conf
+      failed_when:
+        - composer_result.rc != 0
+        - "'ERROR' in mysql_conf.stderr"
+
+
+    - name: Change Magento mode
+      shell: bin/magento deploy:mode:set "{{ magento_mode }}"
+      args:
+        chdir: "{{build_path}}"
+        ## not doing to slow
+      when: false and magento_mode != 'default'
+
+#sudo php bin/magento setup:static-content:deploy  en_US -f
+    - name: Generated code and dependency injection configuration
+      become: yes
+      shell: php bin/magento setup:static-content:deploy {{item}} -f
+      args:
+        chdir: "{{build_path}}"
+      register: magento_compile
+      with_items:
+        - en_US
+        - es_ES
+
+    - name: Reindex Magento
+      become: yes
+      shell: bin/magento indexer:reindex
+      args:
+        chdir: "{{build_path}}"
+      async: 60
+      poll: 0
+
+    - name: Flush all caches
+      become: yes
+      shell: bin/magento cache:flush
+      args:
+        chdir: "{{build_path}}"
+
+    ## ToDo: exclude from sync Git folder
+    - name: Copy to folder with EFS mounts
+      become: yes
+      # rsync [OPTION...] SRC... [DEST]
+      shell: fpsync -n 10 -v -o '-aru --exclude=pub/media*  --exclude=var/log/*' {{build_path}} {{magento_install_path}}
+
+    - name: Set Permission for group
+      become: yes
+      shell: "chown -R www-data: {{magento_install_path}} && chmod -R g+rwx {{magento_install_path}} &&  chown -R www-data:www-data ~/."
+      async: 60
+      poll: 0
+
+    - name: Set Permission for group
+      become: yes
+      shell:  sudo find var vendor pub/static app/etc -type f -exec chmod g+w {}  \; && sudo find var vendor pub/static app/etc -type d -exec chmod g+ws {}  \; && sudo chown -R :www-data . && sudo chmod u+x bin/magento
+      args:
+        chdir: "{{magento_install_path}}"
+      async: 60
+      poll: 0
+
+    - name: Set Permission for group
+      become: yes
+      shell: "rm -f /etc/nginx/sites-enabled/default"
+
+    - name: Create Nginx Config file
+      become: true
+      template:
+        src: nginx/etc/sites-available/magento2.j2
+        dest: /etc/nginx/sites-available/{{magento_domain}}.conf
+        backup: yes
+      with_items:
+        - "{{magento_install_path}}"
+
+    - name: Create Nginx Config file
+      become: true
+      template:
+        src: php/conf.d/10-opcache.j2
+        dest: /etc/php/7.1/fpm/conf.d/10-opcache.ini
+        backup: yes
+
+    #nano /etc/php/7.1/fpm/pool.d/www.conf
+
+    - name: Nginx config for live {{magento_domain}}
+      become: true
+      file:
+        src: /etc/nginx/sites-available/{{magento_domain}}.conf
+        dest: /etc/nginx/sites-enabled/{{magento_domain}}.conf
+        state: link
+
+    - name: start nginx
+      become: yes
+      service:
+        name: nginx
+        state: restarted
+
+    - name: restart PHP-FPM
+      become: yes
+      service:
+        name: php7.1-fpm
+        state: restarted
+
+
+
+
+

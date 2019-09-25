@@ -1,0 +1,33 @@
+---
+    - ec2_ami_facts:
+        region: "{{region}}"
+        filters:
+          name: "{{infrastructure_name}}-vers-{{infrastructure_version}}"
+      register: ami_find
+
+    - name: "Find AMI"
+      debug:
+        var: ami_find
+      when: debug == true
+
+    - name: Create AMI
+      ec2_ami:
+        region: "{{ region }}"
+        instance_id: "{{ ec2[0]['id'] }}"
+        name: "{{infrastructure_name}}-vers-{{infrastructure_version}}"
+        wait: yes
+        state: present
+      register: ami
+      when: ami_find.images[0] is not defined
+
+    - ec2_ami_facts:
+        region: "{{region}}"
+        filters:
+          #name: "{{infrastructure_name}}vers{{infrastructure_version}}-{{ lookup('pipe','date +%Y-%m-%d') }}"
+          name: "{{infrastructure_name}}-vers-{{infrastructure_version}}"
+      register: ami_find
+
+    #TOdo: Check for created and tagged
+    - name: "Find AMI Created"
+      debug:
+        var: ami_find
